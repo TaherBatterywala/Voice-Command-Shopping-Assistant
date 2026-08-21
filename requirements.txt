@@ -1,0 +1,7 @@
+﻿fastapi
+uvicorn[standard]
+python-dotenv
+groq
+google-genai
+python-multipart
+pydantic

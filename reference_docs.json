@@ -1,0 +1,198 @@
+{
+  "assignment": {
+    "source_file": "Copy of Voice Command Shopping Assistant set 2- Assignment 1 (3) (1)_2.pdf",
+    "project_name": "Voice Command Shopping Assistant",
+    "description": "A voice-based shopping list manager with smart suggestions.",
+    "required_features": {
+      "1_voice_input": {
+        "label": "Voice Input",
+        "sub_features": [
+          {
+            "id": "1a",
+            "name": "Voice Command Recognition",
+            "detail": "Allow users to add items to the shopping list using voice commands (e.g., 'Add milk', 'I need apples')."
+          },
+          {
+            "id": "1b",
+            "name": "Natural Language Processing (NLP)",
+            "detail": "Understand and process varied user phrases for flexibility (e.g., 'I want to buy bananas' vs. 'Add bananas to my list')."
+          },
+          {
+            "id": "1c",
+            "name": "Multilingual Support",
+            "detail": "Enable voice commands in multiple languages."
+          }
+        ]
+      },
+      "2_smart_suggestions": {
+        "label": "Smart Suggestions",
+        "sub_features": [
+          {
+            "id": "2a",
+            "name": "Product Recommendations",
+            "detail": "Based on previous shopping history or preferences, suggest items the user is likely to need (e.g., 'It looks like you\u2019re running low on bread')."
+          },
+          {
+            "id": "2b",
+            "name": "Seasonal Recommendations",
+            "detail": "Suggest items that are in season or on sale."
+          },
+          {
+            "id": "2c",
+            "name": "Substitutes",
+            "detail": "Offer alternatives if a product is unavailable or if the user prefers a different option (e.g., suggest almond milk if the user mentions regular milk)."
+          }
+        ]
+      },
+      "3_shopping_list_management": {
+        "label": "Shopping List Management",
+        "sub_features": [
+          {
+            "id": "3a",
+            "name": "Add / Remove / Modify Items",
+            "detail": "Allow users to add, remove, or modify items using voice commands (e.g., 'Remove milk from my list')."
+          },
+          {
+            "id": "3b",
+            "name": "Categorize Items",
+            "detail": "Automatically categorize items (e.g., dairy, produce, snacks) for better organization."
+          },
+          {
+            "id": "3c",
+            "name": "Quantity Management",
+            "detail": "Specify quantities using voice (e.g., 'Add 2 bottles of water' or 'Buy 5 oranges')."
+          }
+        ]
+      },
+      "4_voice_activated_search": {
+        "label": "Voice-Activated Search",
+        "sub_features": [
+          {
+            "id": "4a",
+            "name": "Item Search",
+            "detail": "Allow users to search for specific items by voice, including details like brand, size, or price range (e.g., 'Find me organic apples')."
+          },
+          {
+            "id": "4b",
+            "name": "Price Range Filtering",
+            "detail": "Voice-based filter to specify price ranges or brands (e.g., 'Find toothpaste under $5')."
+          }
+        ]
+      },
+      "11_ui_ux": {
+        "label": "UI / UX (out of backend scope — noted for awareness)",
+        "sub_features": [
+          {
+            "id": "11a",
+            "name": "Minimalist Interface",
+            "detail": "Easy-to-use interface with a simple display of the shopping list."
+          },
+          {
+            "id": "11b",
+            "name": "Visual Feedback",
+            "detail": "Display recognized items and actions in real time (e.g., show added items or confirmations)."
+          },
+          {
+            "id": "11c",
+            "name": "Mobile / Voice-Only Interface",
+            "detail": "Optimized for mobile devices and voice-only interactions."
+          }
+        ]
+      },
+      "12_hosting": {
+        "label": "Hosting (out of backend scope — noted for awareness)",
+        "detail": "Deploy on a reliable platform (e.g., AWS, Firebase, Google Cloud) to manage voice recognition and interactions."
+      }
+    },
+    "technical_requirements": [
+      "Clean, production-quality code",
+      "Basic error handling",
+      "Loading states for better UX",
+      "Simple documentation explaining your approach"
+    ],
+    "technical_freedom": [
+      "Use any frameworks/technologies you're comfortable with",
+      "Free to use AI/ML services (any free tier)",
+      "Collect test data from public sources"
+    ],
+    "deliverables": [
+      "Working application URL",
+      "GitHub repository with source code and README",
+      "Brief write-up of your approach (200 words max)"
+    ],
+    "timeline": {
+      "deadline": "1st Sep 2025",
+      "max_time_investment": "8 hours"
+    },
+    "evaluation_criteria": [
+      "Problem-solving approach",
+      "Code quality",
+      "Working functionality",
+      "Documentation"
+    ]
+  },
+  "submission_guidelines": {
+    "source_file": "Assignment Submission Usage Guidelines (4) (3) (1) (2) (1) (1).pdf",
+    "preferred_format": {
+      "primary": {
+        "type": "GitHub Repository",
+        "rules": [
+          "Branch must be 'main'",
+          "Repository must be public / open-source",
+          "Repository size should be within GitHub limits and fully downloadable"
+        ]
+      },
+      "alternative": {
+        "type": "Google Drive link",
+        "rules": [
+          "Must be publicly accessible / not protected",
+          "Folder/file should be downloadable",
+          "File size should not exceed Google Drive limits (ideally < 1GB)"
+        ]
+      }
+    },
+    "project_structure_rules": {
+      "include": [
+        "Basic application with all required assignment and project code files"
+      ],
+      "exclude": [
+        "node_modules or equivalent dependency folders",
+        ".env or other sensitive configuration files",
+        "Build artifacts (dist/, .next/, out/, etc.)",
+        "Temporary/editor-specific files (.vscode/, .idea/, etc.)"
+      ]
+    },
+    "dependency_policy": [
+      "No extra modules or package files should be added",
+      "Use only what is strictly required for the assignment/project",
+      "Keep dependencies minimal and native whenever possible"
+    ],
+    "pre_submission_checklist": [
+      "Ensure the app runs without errors",
+      "Code files are properly structured and named",
+      "No unnecessary/temporary files committed",
+      "Branch name is set to main",
+      "Repository or Google Drive link is publicly accessible and downloadable",
+      "Submission size is within GitHub / Google Drive limits",
+      "Proper documentation or comments where necessary"
+    ]
+  },
+  "plan_alignment_notes": {
+    "backend_scope": "Points 1, 2, 3, 4 are fully in backend scope. Points 11 (UI/UX) and 12 (Hosting) are noted for awareness but are out of scope for the current backend build.",
+    "compliance_flags": {
+      "no_env_in_repo": "The .env file must NOT be committed — must be in .gitignore.",
+      "no_venv_in_repo": "The venv/ folder must NOT be committed — must be in .gitignore.",
+      "no_pycache": "__pycache__/ and *.pyc files must NOT be committed.",
+      "no_build_artifacts": "No dist/, .next/, out/ folders.",
+      "no_editor_files": "No .vscode/, .idea/ folders.",
+      "minimal_dependencies": "requirements.txt must list ONLY the packages strictly needed.",
+      "gitignore_required": "A proper .gitignore covering the above is mandatory."
+    },
+    "feature_to_file_mapping": {
+      "1_voice_input": ["app/services/stt.py", "app/services/nlp_engine.py", "app/routers/voice.py"],
+      "2_smart_suggestions": ["app/services/suggestions.py", "app/data/mock_db.py"],
+      "3_list_management": ["app/data/mock_db.py", "app/models.py", "app/routers/voice.py"],
+      "4_voice_search": ["app/models.py (FilterCriteria)", "app/services/nlp_engine.py", "app/routers/voice.py"]
+    }
+  }
+}
