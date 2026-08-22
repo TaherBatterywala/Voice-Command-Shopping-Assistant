@@ -59,13 +59,23 @@ class CartItem(BaseModel):
     price_estimate: Optional[float] = None
 
 
+class ItemEntity(BaseModel):
+    """A single item entity in a multi-item voice command."""
+    item_name: str
+    quantity: float = Field(default=1.0, gt=0)
+    unit: Optional[str] = None
+    category: Category = Category.OTHER
+
+
 class NLPResult(BaseModel):
     """
     Strict JSON extraction output from the LLM NLP engine.
-    Every field maps directly to the schema demanded in the system prompt.
+    `items` carries ALL items for multi-item ADD/REMOVE commands.
+    `item_name` carries the primary item for SEARCH_FILTER/GET_SUGGESTIONS.
     """
     intent: Intent = Intent.UNKNOWN
-    item_name: Optional[str] = None
+    items: List[ItemEntity] = Field(default_factory=list)  # multi-item support
+    item_name: Optional[str] = None   # primary item for search/suggestions
     quantity: Optional[float] = None
     unit: Optional[str] = None
     category: Optional[Category] = None
@@ -127,3 +137,10 @@ class ClearCartResponse(BaseModel):
     """Response for DELETE /api/v1/cart."""
     message: str
     cart: List[CartItem]
+
+
+class RemoveItemResponse(BaseModel):
+    """Response for DELETE /api/v1/cart/{item_name} — silent UI remove."""
+    success: bool
+    cart: List[CartItem]
+    total_items: int

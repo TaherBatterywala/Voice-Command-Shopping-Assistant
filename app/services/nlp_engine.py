@@ -24,7 +24,8 @@ from app.config import (
     GROQ_API_KEY,
     GROQ_CHAT_MODEL,
 )
-from app.models import Category, FilterCriteria, Intent, NLPResult
+from app.models import Category, FilterCriteria, Intent, ItemEntity, NLPResult
+
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,15 @@ Parse the user's voice transcript and extract structured intent and entities.
 Return ONLY a valid JSON object matching this exact schema (no markdown, no extra text):
 {
   "intent": "<ADD_ITEM | REMOVE_ITEM | MODIFY_QUANTITY | SEARCH_FILTER | GET_SUGGESTIONS | UNKNOWN>",
-  "item_name": "<item name as a lowercase string, or null>",
+  "items": [
+    {
+      "item_name": "<item name in lowercase>",
+      "quantity": <number or 1>,
+      "unit": "<unit string or null>",
+      "category": "<Dairy | Produce | Snacks | Beverages | Pantry | Other>"
+    }
+  ],
+  "item_name": "<primary item name in lowercase, or null — used for SEARCH_FILTER / GET_SUGGESTIONS>",
   "quantity": <numeric value or null>,
   "unit": "<unit string e.g. bottles, kg, pack, litre, dozen, grams — or null>",
   "category": "<Dairy | Produce | Snacks | Beverages | Pantry | Other — or null>",
@@ -59,24 +68,32 @@ Return ONLY a valid JSON object matching this exact schema (no markdown, no extr
   }
 }
 
+CRITICAL RULE for `items` array:
+- For ADD_ITEM and REMOVE_ITEM: extract EVERY item mentioned in the command into the `items` array.
+  Example: "Add tomato ketchup, almond milk and water" → items has 3 entries.
+  Example: "I need eggs and bread" → items has 2 entries.
+  Example: "Remove oranges and milk" → items has 2 entries.
+- For all other intents: `items` should be an empty array [].
+- Always populate `items` for ADD_ITEM/REMOVE_ITEM, even for a single item.
+
 Intent classification rules:
-- ADD_ITEM       → "add", "I need", "buy", "get me", "I want", "put in", "include", "order"
-- REMOVE_ITEM    → "remove", "delete", "take off", "don't need", "cancel", "drop"
+- ADD_ITEM       → "add", "I need", "buy", "get me", "I want", "put in", "include", "order", "chahiye"
+- REMOVE_ITEM    → "remove", "delete", "take off", "don't need", "cancel", "drop", "hatao"
 - MODIFY_QUANTITY → "change quantity", "update", "make it", "instead of X use Y amount"
 - SEARCH_FILTER  → "find", "search", "look for", "show me", "under $X", "brand X", "organic", "filter"
 - GET_SUGGESTIONS → "suggest", "recommend", "what should I buy", "ideas", "any suggestions"
 - UNKNOWN        → intent cannot be determined
 
-Category inference rules:
+Category inference (apply per item in the `items` array):
 - Dairy     : milk, cheese, yogurt, butter, cream, eggs
-- Produce   : fruits, vegetables, herbs, mushrooms
+- Produce   : fruits, vegetables, herbs, mushrooms, mango, apple, orange, watermelon, spinach
 - Beverages : water, juice, soda, tea, coffee, energy drinks
 - Snacks    : chips, crackers, cookies, candy, nuts, popcorn
-- Pantry    : bread, pasta, rice, flour, oil, sauce, canned goods, spices, cereal
+- Pantry    : bread, pasta, rice, flour, oil, sauce, ketchup, canned goods, spices, cereal
 - Other     : personal care, cleaning, household, medicine
 
 Handle all languages (Hindi, Spanish, French, Arabic, etc.) natively.
-Set filter_criteria to null when not applicable. Use null for any undetermined field."""
+Set filter_criteria to null when not applicable. Use null for undetermined scalar fields."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -156,7 +173,7 @@ def _parse(raw: str) -> NLPResult:
     except ValueError:
         intent = Intent.UNKNOWN
 
-    # Coerce category
+    # Coerce scalar category (for single-item / SEARCH_FILTER / MODIFY_QUANTITY)
     category: Optional[Category] = None
     cat_str: Optional[str] = data.get("category")
     if cat_str:
@@ -176,9 +193,47 @@ def _parse(raw: str) -> NLPResult:
             tags=fc.get("tags") or [],
         )
 
+    # Coerce multi-item `items` array
+    items: list[ItemEntity] = []
+    raw_items = data.get("items") or []
+    if isinstance(raw_items, list):
+        for entry in raw_items:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("item_name") or entry.get("name")
+            if not name:
+                continue
+            try:
+                item_cat = Category(entry.get("category") or "Other")
+            except ValueError:
+                item_cat = Category.OTHER
+            items.append(ItemEntity(
+                item_name=str(name).lower().strip(),
+                quantity=float(entry.get("quantity") or 1.0),
+                unit=entry.get("unit") or None,
+                category=item_cat,
+            ))
+
+    # For ADD/REMOVE without items array, synthesize from scalar fields
+    if not items and intent in (Intent.ADD_ITEM, Intent.REMOVE_ITEM):
+        scalar_name = data.get("item_name")
+        if scalar_name:
+            items.append(ItemEntity(
+                item_name=str(scalar_name).lower().strip(),
+                quantity=float(data.get("quantity") or 1.0),
+                unit=data.get("unit") or None,
+                category=category or Category.OTHER,
+            ))
+
+    # Primary item_name (first item or scalar, used for suggestions/search)
+    primary_name = data.get("item_name")
+    if not primary_name and items:
+        primary_name = items[0].item_name
+
     return NLPResult(
         intent=intent,
-        item_name=data.get("item_name"),
+        items=items,
+        item_name=primary_name,
         quantity=data.get("quantity"),
         unit=data.get("unit"),
         category=category,

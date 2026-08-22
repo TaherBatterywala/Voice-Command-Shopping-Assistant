@@ -9,6 +9,8 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import APP_TITLE, APP_VERSION
 from app.routers.voice import router as voice_router
@@ -55,10 +57,21 @@ app.add_middleware(
 
 app.include_router(voice_router)
 
+# Serve the static UI — mount AFTER API routes so /api/v1/* is never shadowed
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# ── Health check ─────────────────────────────────────────────────────────────
 
-@app.get("/", tags=["Health"])
+# ── UI entry point ────────────────────────────────────────────────────────────
+
+@app.get("/", include_in_schema=False, tags=["UI"])
+async def serve_ui() -> FileResponse:
+    """Serve the single-page frontend."""
+    return FileResponse("static/index.html", media_type="text/html")
+
+
+# ── Health check (moved to /health so / can serve the UI) ────────────────────
+
+@app.get("/health", tags=["Health"])
 async def health_check() -> dict:
     """Returns service health status and version."""
     return {

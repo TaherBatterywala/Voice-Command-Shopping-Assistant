@@ -5,3 +5,7 @@ groq
 google-genai
 python-multipart
 pydantic
+
+from now on we will use gemini-3.1-flash-lite this model for gemini 
+In my .env i have 6 keys for gemini and 2 for groq change that in all the project 
+also check if the necessary files are not commited by accident and files that should not be commited are not commited and in git ignore update requirenments txt accordingly also 

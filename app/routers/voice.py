@@ -2,13 +2,15 @@
 Voice Shopping Assistant — API route handlers.
 
 Routes (all prefixed /api/v1):
-  POST   /voice-command  — Full pipeline: STT → NLP → cart → suggestions → filter
-  GET    /cart           — Current in-memory shopping list
-  DELETE /cart           — Clear the shopping list
-  GET    /suggestions    — Startup / on-demand personalised suggestions
+  POST   /voice-command          — Full pipeline: STT → NLP → cart → suggestions → filter
+  GET    /cart                   — Current in-memory shopping list
+  DELETE /cart                   — Clear the entire shopping list
+  DELETE /cart/{item_name}       — Silently remove one item (no transcript banner)
+  GET    /suggestions            — Startup / on-demand personalised suggestions
 """
 import logging
 from typing import Optional
+from urllib.parse import unquote
 
 from fastapi import APIRouter, File, Form, UploadFile
 
@@ -26,12 +28,13 @@ from app.models import (
     ClearCartResponse,
     Intent,
     NLPResult,
+    RemoveItemResponse,
     SuggestionResult,
     VoiceCommandResponse,
 )
+from app.services.catalog_search import search_products
 from app.services.nlp_engine import process_transcript
 from app.services.stt import transcribe
-from app.services.catalog_search import search_products
 from app.services.suggestions import generate_suggestions
 
 logger = logging.getLogger(__name__)
@@ -70,11 +73,11 @@ async def voice_command(
     # ── 2. NLP extraction ────────────────────────────────────────────────────
     nlp: NLPResult = await process_transcript(transcript)
     logger.info(
-        "voice_command | transcript=%r | intent=%s | item=%s",
-        transcript, nlp.intent, nlp.item_name,
+        "voice_command | transcript=%r | intent=%s | items=%d | item=%s",
+        transcript, nlp.intent, len(nlp.items), nlp.item_name,
     )
 
-    # ── 3. Cart / list management ────────────────────────────────────────────
+    # ── 3. Cart / list management (multi-item aware) ─────────────────────────
     message: str = _apply_intent(nlp)
 
     # ── 4. Smart suggestions ─────────────────────────────────────────────────
@@ -111,7 +114,27 @@ async def get_cart_state() -> CartResponse:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  DELETE /api/v1/cart
+#  DELETE /api/v1/cart/{item_name}  — silent per-item removal for UI buttons
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.delete(
+    "/cart/{item_name}",
+    response_model=RemoveItemResponse,
+    summary="Silently remove a single item",
+    description=(
+        "Removes one item by name. Designed for UI remove buttons — "
+        "returns the updated cart WITHOUT triggering a transcript banner."
+    ),
+)
+async def remove_cart_item(item_name: str) -> RemoveItemResponse:
+    name = unquote(item_name).strip()
+    remove_item(name)          # returns False if not found — that's fine, just silently sync
+    cart = get_cart()
+    return RemoveItemResponse(success=True, cart=cart, total_items=len(cart))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  DELETE /api/v1/cart  — clear entire list
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.delete(
@@ -144,62 +167,82 @@ async def get_suggestions() -> SuggestionResult:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Internal helper — applies NLP intent to in-memory cart
+#  Internal helper — applies NLP intent to in-memory cart (multi-item aware)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _apply_intent(nlp: NLPResult) -> str:
-    """Mutate the in-memory cart based on the extracted intent and return a user message."""
+    """Mutate the in-memory cart and return a user-facing message."""
 
+    # ── ADD_ITEM ─────────────────────────────────────────────────────────────
     if nlp.intent == Intent.ADD_ITEM:
-        if not nlp.item_name:
-            return "I couldn't identify the item to add. Please try again."
-        item = CartItem(
-            item_name=nlp.item_name,
-            quantity=nlp.quantity or 1.0,
-            unit=nlp.unit,
-            category=nlp.category or Category.OTHER,
-        )
-        added = add_item(item)
-        qty = _fmt_qty(added.quantity, added.unit)
-        return f"Added {qty} of {added.item_name} ({added.category.value}) to your shopping list."
+        if not nlp.items:
+            return "I couldn't identify any items to add. Please say something like 'Add 2 litres of milk'."
 
+        added_labels: list[str] = []
+        for entity in nlp.items:
+            cart_item = CartItem(
+                item_name=entity.item_name,
+                quantity=entity.quantity,
+                unit=entity.unit,
+                category=entity.category,
+            )
+            result = add_item(cart_item)
+            qty_str = _fmt_qty(result.quantity, result.unit)
+            added_labels.append(f"{qty_str} {result.item_name}")
+
+        if len(added_labels) == 1:
+            return f"✅ Added {added_labels[0]} to your list."
+        return f"✅ Added {len(added_labels)} items: {', '.join(added_labels)}."
+
+    # ── REMOVE_ITEM ──────────────────────────────────────────────────────────
     if nlp.intent == Intent.REMOVE_ITEM:
-        if not nlp.item_name:
-            return "I couldn't identify the item to remove. Please try again."
-        if remove_item(nlp.item_name):
-            return f"Removed '{nlp.item_name}' from your shopping list."
-        return f"'{nlp.item_name}' was not found in your shopping list."
+        if not nlp.items:
+            return "I couldn't identify any items to remove. Please say 'Remove milk' for example."
 
+        removed: list[str] = []
+        not_found: list[str] = []
+        for entity in nlp.items:
+            if remove_item(entity.item_name):
+                removed.append(entity.item_name)
+            else:
+                not_found.append(entity.item_name)
+
+        parts: list[str] = []
+        if removed:
+            parts.append(f"Removed: {', '.join(removed)}")
+        if not_found:
+            parts.append(f"Not found: {', '.join(not_found)}")
+        return " · ".join(parts) or "Nothing was removed."
+
+    # ── MODIFY_QUANTITY ──────────────────────────────────────────────────────
     if nlp.intent == Intent.MODIFY_QUANTITY:
-        if not nlp.item_name or nlp.quantity is None:
+        name = nlp.item_name or (nlp.items[0].item_name if nlp.items else None)
+        qty  = nlp.quantity  or (nlp.items[0].quantity  if nlp.items else None)
+        if not name or qty is None:
             return "Please specify both the item name and the new quantity."
-        modified = modify_item(nlp.item_name, nlp.quantity)
-        if modified:
-            qty = _fmt_qty(modified.quantity, modified.unit)
-            return f"Updated '{nlp.item_name}' to {qty}."
-        return f"'{nlp.item_name}' was not found in your shopping list."
+        result = modify_item(name, qty)
+        if result:
+            return f"Updated '{name}' to {_fmt_qty(result.quantity, result.unit)}."
+        return f"'{name}' was not found in your list."
 
+    # ── SEARCH_FILTER ─────────────────────────────────────────────────────────
     if nlp.intent == Intent.SEARCH_FILTER:
         parts = [nlp.item_name or "items"]
         fc = nlp.filter_criteria
         if fc:
-            if fc.brand:
-                parts.append(f"brand: {fc.brand}")
-            if fc.max_price is not None:
-                parts.append(f"under ${fc.max_price:.2f}")
-            if fc.min_price is not None:
-                parts.append(f"above ${fc.min_price:.2f}")
-            if fc.tags:
-                parts.append(f"tags: {', '.join(fc.tags)}")
-        return f"Searching for {' | '.join(parts)}."
+            if fc.brand:          parts.append(f"brand: {fc.brand}")
+            if fc.max_price:      parts.append(f"under ${fc.max_price:.2f}")
+            if fc.min_price:      parts.append(f"above ${fc.min_price:.2f}")
+            if fc.tags:           parts.append(f"tags: {', '.join(fc.tags)}")
+        return f"🔍 Searching for {' | '.join(parts)}."
 
+    # ── GET_SUGGESTIONS ───────────────────────────────────────────────────────
     if nlp.intent == Intent.GET_SUGGESTIONS:
-        return "Here are your personalised shopping suggestions."
+        return "✨ Here are your personalised shopping suggestions."
 
     return "I didn't understand that command. Please try again with a clearer phrase."
 
 
-def _fmt_qty(quantity: float, unit: Optional[str]) -> str:  # type: ignore[name-defined]
-    """Format quantity + unit into a readable string."""
+def _fmt_qty(quantity: float, unit: Optional[str]) -> str:
     qty_str = str(int(quantity)) if quantity == int(quantity) else str(quantity)
     return f"{qty_str} {unit}" if unit else qty_str
