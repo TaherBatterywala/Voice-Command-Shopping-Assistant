@@ -100,13 +100,24 @@ def add_item(item: CartItem) -> CartItem:
     return item
 
 
-def remove_item(item_name: str) -> bool:
-    """Remove an item by name. Returns True if removed, False if not found."""
+def remove_item(item_name: str, qty: Optional[float] = None) -> bool:
+    """
+    Remove an item by name.
+    - If `qty` is None  → remove the entire entry.
+    - If `qty` is given → reduce quantity by that amount; delete only when qty ≤ 0.
+    Returns True if the item was found and acted upon, False if not found.
+    """
     key = _normalise(item_name)
-    if key in _shopping_list:
+    if key not in _shopping_list:
+        return False
+    if qty is None:
         del _shopping_list[key]
         return True
-    return False
+    existing = _shopping_list[key]
+    existing.quantity = round(existing.quantity - qty, 2)
+    if existing.quantity <= 0:
+        del _shopping_list[key]
+    return True
 
 
 def modify_item(item_name: str, quantity: float) -> Optional[CartItem]:

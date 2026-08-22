@@ -1,10 +1,10 @@
 """
-Smart Suggestions Service.
+Smart Suggestions Service — dynamic, cart-aware.
 
-Generates three types of personalized grocery suggestions via LLM:
-  - historical_recommendations : items from the user's mock purchase history
-  - seasonal_recommendations   : in-season or trending items for the current month
-  - substitutes                : smart alternatives for the item being discussed
+Generates three types of personalised grocery suggestions via LLM:
+  - historical_recommendations : restock items from purchase history (varied each call)
+  - seasonal_recommendations   : in-season / trending items for the current month
+  - substitutes                : smart alternatives relevant to the current cart + item
 
 Provider strategy: Groq primary → Gemini fallback → empty SuggestionResult on total failure.
 """
@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from google import genai
 from google.genai import types as genai_types
@@ -25,7 +25,7 @@ from app.config import (
     GROQ_CHAT_MODEL,
 )
 from app.data.mock_db import PURCHASE_HISTORY
-from app.models import SubstitutePair, SuggestionResult
+from app.models import CartItem, SubstitutePair, SuggestionResult
 
 logger = logging.getLogger(__name__)
 
@@ -49,27 +49,51 @@ _SEASON_MAP: dict[int, str] = {
     9: "Autumn",  10: "Autumn", 11: "Autumn",
 }
 
+# India-specific season overrides (monsoon / harvest context)
+_INDIA_SEASON_MAP: dict[int, str] = {
+    6: "Monsoon", 7: "Monsoon", 8: "Monsoon", 9: "Monsoon",
+    10: "Post-Monsoon / Festival Season (Navratri, Diwali)",
+    11: "Early Winter / Festival Season",
+    12: "Winter",  1: "Winter",  2: "Winter",
+    3: "Spring / Holi",  4: "Summer",  5: "Peak Summer",
+}
 
-def _get_month_and_season() -> tuple[str, str]:
+
+def _get_time_context() -> tuple[str, str, str]:
     now = datetime.now()
-    return now.strftime("%B"), _SEASON_MAP.get(now.month, "Summer")
+    month = now.strftime("%B")
+    season = _INDIA_SEASON_MAP.get(now.month, _SEASON_MAP.get(now.month, "Summer"))
+    weekday = now.strftime("%A")
+    return month, season, weekday
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Prompt builder
+#  Prompt builder — cart-aware & varied
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_prompt(item_name: Optional[str]) -> str:
-    month, season = _get_month_and_season()
-    history_str = ", ".join(PURCHASE_HISTORY[:12])
+def _build_prompt(item_name: Optional[str], cart_items: List[CartItem]) -> str:
+    month, season, weekday = _get_time_context()
+
+    history_str = ", ".join(PURCHASE_HISTORY[:15])
+
+    # Current cart context
+    if cart_items:
+        cart_str = ", ".join(
+            f"{c.item_name} ({c.quantity}{' ' + c.unit if c.unit else ''})"
+            for c in cart_items
+        )
+        cart_ctx = f"Current shopping cart: {cart_str}."
+    else:
+        cart_ctx = "Shopping cart is currently empty."
+
     item_ctx = (
         f"The user is currently discussing: '{item_name}'."
         if item_name
         else "No specific item is being discussed."
     )
 
-    return f"""You are a personalized grocery shopping suggestion engine.
-Generate recommendations based on the provided context.
+    return f"""You are a smart, personalised grocery shopping assistant generating dynamic suggestions.
+Today is {weekday}, {month}. Season: {season}.
 
 Return ONLY a valid JSON object (no markdown, no extra text):
 {{
@@ -81,30 +105,52 @@ Return ONLY a valid JSON object (no markdown, no extra text):
 }}
 
 Context:
-- User purchase history : {history_str}
-- Current month        : {month}
-- Current season       : {season}
+- {cart_ctx}
+- Purchase history : {history_str}
+- Current month   : {month}
+- Season          : {season}
 - {item_ctx}
 
 Rules:
-- historical_recommendations : 3-4 items from purchase history the user likely needs to restock.
-- seasonal_recommendations   : 3-4 fresh, in-season, or trending grocery items for {season} in {month}.
-- substitutes                : If an item is mentioned, provide 1-3 smart, practical substitutes with
-  a brief reason each (e.g., almond milk for whole milk → "lower calorie, dairy-free").
-  If no item is mentioned, suggest 2 common healthy swaps from the purchase history.
-- Keep all suggestions realistic and practical grocery items only."""
+HISTORICAL RECOMMENDATIONS:
+  - Pick 3-5 items from purchase history the user likely needs to restock NOW.
+  - Cross-reference the cart: do NOT recommend items already in the cart.
+  - Vary the selection each time — avoid always returning the same 4 items.
+  - If cart has tea, suggest sugar, biscuits, or milk.
+  - If cart has rice, suggest dal, oil, or spices.
+  - If cart has pasta, suggest tomato sauce or parmesan.
+
+SEASONAL RECOMMENDATIONS:
+  - 3-5 fresh, in-season, or trending grocery items for {season} in {month} in India.
+  - Include seasonal fruits, vegetables, or festival foods appropriate for this time.
+  - Do NOT repeat items already in the cart.
+  - Examples for Monsoon: corn, jamun, litchi, green tea, ginger, tulsi.
+  - Examples for Winter: gajar (carrot), methi, sarson, peanuts, jaggery.
+  - Examples for Summer: watermelon, mango, kokum, coconut water, cucumber.
+
+SUBSTITUTES:
+  - If an item is mentioned, provide 1-3 smart practical substitutes with brief reasons.
+  - If no specific item is mentioned but cart is non-empty, suggest substitutes for 1-2 cart items.
+  - If cart is empty, suggest 2 common healthy swaps from purchase history.
+  - Keep reasons short (under 10 words).
+  - Do NOT suggest swaps for items not relevant to grocery/FMCG.
+
+Keep all suggestions realistic, practical grocery items only. Do not repeat cart items."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def generate_suggestions(item_name: Optional[str] = None) -> SuggestionResult:
+async def generate_suggestions(
+    item_name: Optional[str] = None,
+    cart_items: Optional[List[CartItem]] = None,
+) -> SuggestionResult:
     """
-    Generate personalized suggestions for the given item context.
+    Generate dynamic, cart-aware personalised suggestions.
     Groq primary → Gemini fallback → empty SuggestionResult on total failure.
     """
-    prompt = _build_prompt(item_name)
+    prompt = _build_prompt(item_name, cart_items or [])
 
     try:
         return await _suggest_with_groq(prompt)
@@ -127,8 +173,8 @@ async def _suggest_with_groq(prompt: str) -> SuggestionResult:
         model=GROQ_CHAT_MODEL,
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
-        temperature=0.6,
-        max_tokens=800,
+        temperature=0.8,   # higher → more varied, non-repetitive
+        max_tokens=900,
     )
     raw: str = response.choices[0].message.content or "{}"
     logger.debug("Suggestions (Groq) raw: %s", raw)
@@ -144,7 +190,7 @@ async def _suggest_with_gemini(prompt: str) -> SuggestionResult:
             contents=prompt,
             config=genai_types.GenerateContentConfig(
                 response_mime_type="application/json",
-                temperature=0.6,
+                temperature=0.8,
             ),
         ),
     )

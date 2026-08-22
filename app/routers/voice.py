@@ -80,8 +80,8 @@ async def voice_command(
     # ── 3. Cart / list management (multi-item aware) ─────────────────────────
     message: str = _apply_intent(nlp)
 
-    # ── 4. Smart suggestions ─────────────────────────────────────────────────
-    suggestions: SuggestionResult = await generate_suggestions(nlp.item_name)
+    # ── 4. Smart suggestions (cart-aware) ──────────────────────────────────
+    suggestions: SuggestionResult = await generate_suggestions(nlp.item_name, get_cart())
 
     # ── 5. Search / filter (two-layer: local catalog → LLM universal lookup) ──
     search_results = None
@@ -163,7 +163,7 @@ async def clear_cart_state() -> ClearCartResponse:
     ),
 )
 async def get_suggestions() -> SuggestionResult:
-    return await generate_suggestions(item_name=None)
+    return await generate_suggestions(item_name=None, cart_items=get_cart())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -200,16 +200,28 @@ def _apply_intent(nlp: NLPResult) -> str:
             return "I couldn't identify any items to remove. Please say 'Remove milk' for example."
 
         removed: list[str] = []
+        reduced: list[str] = []
         not_found: list[str] = []
         for entity in nlp.items:
-            if remove_item(entity.item_name):
-                removed.append(entity.item_name)
+            # If a quantity was specified (e.g. "remove 2 mangoes"), do partial remove
+            # Otherwise (e.g. "remove mangoes"), delete the whole entry
+            qty_to_remove = entity.quantity if entity.quantity and entity.quantity > 0 else None
+            # Treat qty=1 from implicit parse as "no specific qty" → full remove
+            explicit_qty = qty_to_remove if (qty_to_remove and qty_to_remove != 1.0) else None
+            found = remove_item(entity.item_name, explicit_qty)
+            if found:
+                if explicit_qty:
+                    reduced.append(f"{_fmt_qty(explicit_qty, entity.unit)} {entity.item_name}")
+                else:
+                    removed.append(entity.item_name)
             else:
                 not_found.append(entity.item_name)
 
         parts: list[str] = []
         if removed:
             parts.append(f"Removed: {', '.join(removed)}")
+        if reduced:
+            parts.append(f"Reduced: {', '.join(reduced)}")
         if not_found:
             parts.append(f"Not found: {', '.join(not_found)}")
         return " · ".join(parts) or "Nothing was removed."
@@ -218,12 +230,17 @@ def _apply_intent(nlp: NLPResult) -> str:
     if nlp.intent == Intent.MODIFY_QUANTITY:
         name = nlp.item_name or (nlp.items[0].item_name if nlp.items else None)
         qty  = nlp.quantity  or (nlp.items[0].quantity  if nlp.items else None)
+        unit = nlp.unit or (nlp.items[0].unit if nlp.items else None)
+        cat  = nlp.category or (nlp.items[0].category if nlp.items else Category.OTHER)
         if not name or qty is None:
             return "Please specify both the item name and the new quantity."
         result = modify_item(name, qty)
         if result:
-            return f"Updated '{name}' to {_fmt_qty(result.quantity, result.unit)}."
-        return f"'{name}' was not found in your list."
+            return f"✅ Updated '{name}' to {_fmt_qty(result.quantity, result.unit)}."
+        # Item not in cart — upsert (add it)
+        new_item = CartItem(item_name=name, quantity=qty, unit=unit, category=cat)
+        add_item(new_item)
+        return f"✅ Added '{name}' ({_fmt_qty(qty, unit)}) to your list."
 
     # ── SEARCH_FILTER ─────────────────────────────────────────────────────────
     if nlp.intent == Intent.SEARCH_FILTER:
